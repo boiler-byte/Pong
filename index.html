@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Pong</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #111; font-family: Arial, Helvetica, sans-serif;
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  #game {
+    position: relative; width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas { display: block; background: #000; touch-action: none; }
+
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.85);
+    color: #fff; text-align: center; padding: 20px; z-index: 10;
+  }
+  .overlay.hidden { display: none; }
+  .overlay h1 {
+    font-size: clamp(28px, 6vw, 64px);
+    margin-bottom: 20px; letter-spacing: 4px;
+    color: #fff; text-shadow: 0 0 20px #0ff;
+  }
+  .overlay p { margin-bottom: 25px; font-size: clamp(13px, 2vw, 18px); color: #bbb; line-height: 1.6; }
+  .btn {
+    background: #0ff; color: #000; border: none;
+    padding: 14px 32px; margin: 6px; font-size: clamp(14px, 2.2vw, 20px);
+    font-weight: bold; border-radius: 10px; cursor: pointer;
+    letter-spacing: 1px; transition: transform 0.1s, box-shadow 0.2s;
+    box-shadow: 0 0 15px rgba(0,255,255,0.4);
+  }
+  .btn:hover { transform: scale(1.05); box-shadow: 0 0 25px rgba(0,255,255,0.8); }
+  .btn:active { transform: scale(0.97); }
+  .btn.secondary { background: #fff; box-shadow: 0 0 15px rgba(255,255,255,0.4); }
+  .btn.secondary:hover { box-shadow: 0 0 25px rgba(255,255,255,0.8); }
+
+  .powerup-toggle {
+    display: flex; align-items: center; gap: 14px;
+    margin: 18px 0 8px; font-size: clamp(14px, 2vw, 18px);
+    color: #ccc; cursor: pointer; user-select: none;
+  }
+  .switch {
+    position: relative; width: 58px; height: 30px;
+    background: #333; border-radius: 15px;
+    transition: background 0.25s; flex-shrink: 0;
+    box-shadow: inset 0 0 8px rgba(0,0,0,0.6);
+  }
+  .switch::after {
+    content: ''; position: absolute; top: 3px; left: 3px;
+    width: 24px; height: 24px; border-radius: 50%;
+    background: #888; transition: transform 0.25s, background 0.25s;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  }
+  .powerup-toggle.on .switch { background: #0aa; }
+  .powerup-toggle.on .switch::after { transform: translateX(28px); background: #0ff; box-shadow: 0 0 10px #0ff; }
+  .powerup-toggle.on .label { color: #0ff; }
+
+  #rotateHint {
+    position: fixed; inset: 0; z-index: 100;
+    background: #000; color: #0ff;
+    display: none; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center; padding: 20px;
+  }
+  #rotateHint .rot-icon {
+    width: 60px; height: 100px; border: 3px solid #0ff; border-radius: 10px;
+    margin-bottom: 25px; position: relative;
+    animation: rotateHint 2s ease-in-out infinite;
+  }
+  @keyframes rotateHint {
+    0%, 40% { transform: rotate(0deg); }
+    60%, 100% { transform: rotate(90deg); }
+  }
+
+  .controls-hint { font-size: clamp(11px, 1.6vw, 15px); color: #666; margin-top: 20px; }
+</style>
+</head>
+<body>
+
+<div id="game">
+  <canvas id="canvas"></canvas>
+
+  <div id="menu" class="overlay">
+    <h1>PONG</h1>
+    <p>Erster Spieler mit 5 Punkten gewinnt!</p>
+    <button class="btn" id="btn1P">1 Spieler (gegen Computer)</button>
+    <button class="btn secondary" id="btn2P">2 Spieler</button>
+
+    <div class="powerup-toggle" id="powerupToggle">
+      <span class="label">Power-Ups</span>
+      <span class="switch"></span>
+    </div>
+
+    <div class="controls-hint">
+      Tastatur: W/S = links &nbsp;•&nbsp; Pfeil ↑/↓ = rechts<br>
+      Touch: linke Bildschirmhälfte = links &nbsp;•&nbsp; rechte Hälfte = rechts<br>
+      (Wischen funktioniert überall – auch außerhalb des Spielfelds)
+    </div>
+  </div>
+
+  <div id="pauseMenu" class="overlay hidden">
+    <h1>PAUSE</h1>
+    <button class="btn" id="btnResume">Weiter</button>
+    <button class="btn secondary" id="btnMenu">Hauptmenü</button>
+  </div>
+
+  <div id="gameOver" class="overlay hidden">
+    <h1 id="winnerText">Spieler 1 gewinnt!</h1>
+    <button class="btn" id="btnRematch">Nochmal</button>
+    <button class="btn secondary" id="btnMenu2">Hauptmenü</button>
+  </div>
+</div>
+
+<div id="rotateHint">
+  <div class="rot-icon"></div>
+  <h2 style="margin-bottom:15px;color:#0ff;">Bitte Gerät drehen</h2>
+  <p style="color:#aaa;">Pong wird im Querformat gespielt.<br>Bitte halte das Gerät quer.</p>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- Canvas Setup ----------
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+
+  const W = 1000;
+  const H = 600;
+
+  let scale = 1;
+
+  function resize() {
+    const winW = window.innerWidth;
+    const winH = window.innerHeight;
+    const ratio = W / H;
+
+    let cw = winW, ch = winW / ratio;
+    if (ch > winH) { ch = winH; cw = winH * ratio; }
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = cw + 'px';
+    canvas.style.height = ch + 'px';
+    canvas.width = Math.round(cw * dpr);
+    canvas.height = Math.round(ch * dpr);
+
+    scale = cw / W;
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+  }
+
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 200));
+
+  // ---------- Landscape-Hinweis ----------
+  const rotateHint = document.getElementById('rotateHint');
+  function isTouchDevice() {
+    return ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  }
+  function checkOrientation() {
+    const portrait = window.innerHeight > window.innerWidth;
+    rotateHint.style.display = (isTouchDevice() && portrait) ? 'flex' : 'none';
+  }
+  window.addEventListener('resize', checkOrientation);
+  window.addEventListener('orientationchange', () => setTimeout(checkOrientation, 200));
+  checkOrientation();
+
+  // ---------- Konstanten ----------
+  const PADDLE_W = 16;
+  const BASE_PADDLE_H = 100;
+  const BIG_PADDLE_H = 170;     // ~1.7x
+  const SMALL_PADDLE_H = 55;    // ~0.55x
+  const BALL_R = 10;
+  const PADDLE_MARGIN = 30;
+  const WIN_SCORE = 5;
+  const PADDLE_SPEED = 620;
+
+  const POWERUP_RADIUS = 26;
+  const POWERUP_SPAWN_MIN = 30;
+  const POWERUP_SPAWN_MAX = 60;
+  const POWERUP_LIFETIME = 20;
+  const INVERT_DURATION = 15;
+  const SIZE_DURATION = 15;
+
+  // Power-Up-Typen
+  const POWERUP_TYPES = ['star', 'invert', 'grow', 'shrink'];
+
+  // ---------- Spielzustand ----------
+  const state = {
+    mode: 'menu',
+    vsComputer: false,
+    powerUpsEnabled: true,
+
+    paddleL: { x: PADDLE_MARGIN, y: H/2 - BASE_PADDLE_H/2, w: PADDLE_W, h: BASE_PADDLE_H, vy: 0 },
+    paddleR: { x: W - PADDLE_MARGIN - PADDLE_W, y: H/2 - BASE_PADDLE_H/2, w: PADDLE_W, h: BASE_PADDLE_H, vy: 0 },
+
+    balls: [],
+
+    scoreL: 0,
+    scoreR: 0,
+
+    keys: { w:false, s:false, up:false, down:false },
+
+    touch: {
+      left:  { active:false, targetY: H/2 },
+      right: { active:false, targetY: H/2 }
+    },
+
+    activePowerUp: null,
+    powerUpTimer: 0,
+    invert: { left: 0, right: 0 },
+    // Schläger-Größen-Timer und aktueller Ziel-H-Wert
+    growTimer: 0,
+    shrinkTimer: 0,
+
+    lastTime: 0,
+    serveTimer: 0,
+    serving: false
+  };
+
+  // ---------- Menü ----------
+  const menuEl = document.getElementById('menu');
+  const pauseMenuEl = document.getElementById('pauseMenu');
+  const gameOverEl = document.getElementById('gameOver');
+  const winnerTextEl = document.getElementById('winnerText');
+  const powerupToggleEl = document.getElementById('powerupToggle');
+
+  function show(el) { el.classList.remove('hidden'); }
+  function hide(el) { el.classList.add('hidden'); }
+
+  powerupToggleEl.addEventListener('click', () => {
+    state.powerUpsEnabled = !state.powerUpsEnabled;
+    powerupToggleEl.classList.toggle('on', state.powerUpsEnabled);
+  });
+  powerupToggleEl.classList.add('on');
+
+  document.getElementById('btn1P').addEventListener('click', () => startGame(true));
+  document.getElementById('btn2P').addEventListener('click', () => startGame(false));
+  document.getElementById('btnResume').addEventListener('click', () => resumeGame());
+  document.getElementById('btnMenu').addEventListener('click', () => toMenu());
+  document.getElementById('btnMenu2').addEventListener('click', () => toMenu());
+  document.getElementById('btnRematch').addEventListener('click', () => startGame(state.vsComputer));
+
+  function toMenu() {
+    state.mode = 'menu';
+    hide(pauseMenuEl);
+    hide(gameOverEl);
+    show(menuEl);
+  }
+
+  function startGame(vsComputer) {
+    state.vsComputer = vsComputer;
+    state.scoreL = 0;
+    state.scoreR = 0;
+    state.activePowerUp = null;
+    state.invert.left = 0;
+    state.invert.right = 0;
+    state.growTimer = 0;
+    state.shrinkTimer = 0;
+    setPaddleHeights(BASE_PADDLE_H);
+    resetPaddles();
+    resetForServe(true);
+    scheduleNextPowerUp(true);
+    state.mode = 'playing';
+    state.lastTime = performance.now();
+    hide(menuEl);
+    hide(pauseMenuEl);
+    hide(gameOverEl);
+  }
+
+  function resumeGame() {
+    state.mode = 'playing';
+    state.lastTime = performance.now();
+    hide(pauseMenuEl);
+  }
+
+  function pauseGame() {
+    if (state.mode === 'playing') {
+      state.mode = 'paused';
+      show(pauseMenuEl);
+    } else if (state.mode === 'paused') {
+      resumeGame();
+    }
+  }
+
+  function resetPaddles() {
+    state.paddleL.y = H/2 - state.paddleL.h/2;
+    state.paddleR.y = H/2 - state.paddleR.h/2;
+    state.paddleL.vy = 0;
+    state.paddleR.vy = 0;
+  }
+
+  // Setzt beide Schläger auf eine neue Höhe, ohne dass sie aus dem Feld ragen
+  function setPaddleHeights(h) {
+    for (const p of [state.paddleL, state.paddleR]) {
+      // Zentrum beibehalten
+      const cy = p.y + p.h / 2;
+      p.h = h;
+      p.y = cy - h / 2;
+    }
+    clampPaddle(state.paddleL);
+    clampPaddle(state.paddleR);
+  }
+
+  // Aktuelle Zielhöhe je nach Timer-Zustand
+  function currentTargetPaddleH() {
+    if (state.growTimer > 0) return BIG_PADDLE_H;
+    if (state.shrinkTimer > 0) return SMALL_PADDLE_H;
+    return BASE_PADDLE_H;
+  }
+
+  function resetForServe(shortDelay) {
+    state.balls = [{
+      x: W/2, y: H/2, vx: 0, vy: 0, r: BALL_R, speed: 420
+    }];
+    state.serving = true;
+    state.serveTimer = shortDelay ? 0.6 : 0.9;
+  }
+
+  function serveBall() {
+    const ball = state.balls[0];
+    if (!ball) { state.serving = false; return; }
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    const angle = (Math.random() * 0.6 - 0.3);
+    ball.speed = 420;
+    ball.vx = dir * ball.speed * Math.cos(angle);
+    ball.vy = ball.speed * Math.sin(angle);
+    state.serving = false;
+  }
+
+  // ---------- Power-Up Timing ----------
+  function scheduleNextPowerUp(isInitial) {
+    if (!state.powerUpsEnabled) {
+      state.powerUpTimer = Infinity;
+      return;
+    }
+    const min = isInitial ? 8 : POWERUP_SPAWN_MIN;
+    const range = POWERUP_SPAWN_MAX - POWERUP_SPAWN_MIN;
+    state.powerUpTimer = min + Math.random() * range;
+  }
+
+  function spawnPowerUp() {
+    if (state.activePowerUp) return;
+    const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+    const marginX = W * 0.25;
+    const marginY = POWERUP_RADIUS + 20;
+    const x = marginX + Math.random() * (W - marginX * 2);
+    const y = marginY + Math.random() * (H - marginY * 2);
+    state.activePowerUp = { type, x, y, age: 0, spawnAnim: 0 };
+  }
+
+  function applyStarPowerUp(powerUp) {
+    const baseBall = state.balls[0];
+    if (!baseBall) return;
+    const extra = 1 + Math.floor(Math.random() * 4);
+    const startX = powerUp.x;
+    const startY = powerUp.y;
+    for (let i = 0; i < extra; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 380 + Math.random() * 100;
+      state.balls.push({
+        x: startX, y: startY,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        r: BALL_R, speed
+      });
+    }
+  }
+
+  function applyInvertPowerUp(triggeredBy) {
+    const opponent = triggeredBy === 'left' ? 'right' : 'left';
+    state.invert[opponent] = INVERT_DURATION;
+  }
+
+  function applyGrowPowerUp() {
+    // Beide Schläger groß, für 15 s. Verkleinern-Timer aufheben, damit
+    // sich die Effekte nicht gegenseitig neutralisieren.
+    state.shrinkTimer = 0;
+    state.growTimer = SIZE_DURATION;
+  }
+
+  function applyShrinkPowerUp() {
+    state.growTimer = 0;
+    state.shrinkTimer = SIZE_DURATION;
+  }
+
+  // ---------- Tastatur ----------
+  window.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === 'w') state.keys.w = true;
+    if (k === 's') state.keys.s = true;
+    if (k === 'arrowup') { state.keys.up = true; e.preventDefault(); }
+    if (k === 'arrowdown') { state.keys.down = true; e.preventDefault(); }
+    if (k === 'escape' || k === 'p') {
+      if (state.mode === 'playing' || state.mode === 'paused') pauseGame();
+    }
+    if (k === ' ' && state.mode === 'gameover') {
+      startGame(state.vsComputer);
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === 'w') state.keys.w = false;
+    if (k === 's') state.keys.s = false;
+    if (k === 'arrowup') state.keys.up = false;
+    if (k === 'arrowdown') state.keys.down = false;
+  });
+
+  // ---------- Touch (fensterweit) ----------
+  const activeTouches = new Map();
+
+  function windowToFieldY(clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const relY = (clientY - rect.top) / rect.height;
+    const clamped = Math.max(0, Math.min(1, relY));
+    return clamped * H;
+  }
+  function sideFromX(clientX) {
+    return clientX < window.innerWidth / 2 ? 'left' : 'right';
+  }
+  function setTouchTarget(side, clientY) {
+    const target = side === 'left' ? state.touch.left : state.touch.right;
+    target.targetY = windowToFieldY(clientY);
+  }
+
+  function handleTouchStart(e) {
+    if (state.mode === 'menu' || state.mode === 'gameover' || state.mode === 'paused') return;
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      const side = sideFromX(t.clientX);
+      activeTouches.set(t.identifier, side);
+      const target = side === 'left' ? state.touch.left : state.touch.right;
+      target.active = true;
+      setTouchTarget(side, t.clientY);
+    }
+  }
+  function handleTouchMove(e) {
+    if (state.mode !== 'playing') return;
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      const side = activeTouches.get(t.identifier);
+      if (!side) continue;
+      setTouchTarget(side, t.clientY);
+    }
+  }
+  function handleTouchEnd(e) {
+    for (const t of e.changedTouches) {
+      const side = activeTouches.get(t.identifier);
+      if (!side) continue;
+      activeTouches.delete(t.identifier);
+      const target = side === 'left' ? state.touch.left : state.touch.right;
+      target.active = false;
+    }
+    if (state.mode === 'playing') e.preventDefault();
+  }
+
+  window.addEventListener('touchstart', handleTouchStart, { passive: false });
+  window.addEventListener('touchmove', handleTouchMove, { passive: false });
+  window.addEventListener('touchend', handleTouchEnd, { passive: false });
+  window.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+
+  // ---------- Update ----------
+  function update(dt) {
+    if (state.mode !== 'playing') return;
+
+    // Timer
+    if (state.invert.left > 0)  state.invert.left  = Math.max(0, state.invert.left  - dt);
+    if (state.invert.right > 0) state.invert.right = Math.max(0, state.invert.right - dt);
+    if (state.growTimer > 0)    state.growTimer    = Math.max(0, state.growTimer    - dt);
+    if (state.shrinkTimer > 0)  state.shrinkTimer  = Math.max(0, state.shrinkTimer  - dt);
+
+    // Schlägerhöhe weich in Richtung Ziel animieren
+    const targetH = currentTargetPaddleH();
+    const lerpFactor = Math.min(1, dt * 10);
+    if (Math.abs(state.paddleL.h - targetH) > 0.5) {
+      const newH = state.paddleL.h + (targetH - state.paddleL.h) * lerpFactor;
+      setPaddleHeights(newH);
+    }
+
+    // Power-Up Spawn
+    if (state.powerUpsEnabled && !state.activePowerUp) {
+      state.powerUpTimer -= dt;
+      if (state.powerUpTimer <= 0) {
+        spawnPowerUp();
+        scheduleNextPowerUp(false);
+      }
+    }
+
+    if (state.activePowerUp) {
+      state.activePowerUp.age += dt;
+      state.activePowerUp.spawnAnim = Math.min(1, state.activePowerUp.spawnAnim + dt * 4);
+      if (state.activePowerUp.age > POWERUP_LIFETIME) {
+        state.activePowerUp = null;
+      }
+    }
+
+    // Paddle L
+    const leftInverted = state.invert.left > 0;
+    let moveL = 0;
+    if (state.keys.w) moveL -= 1;
+    if (state.keys.s) moveL += 1;
+    if (leftInverted) moveL = -moveL;
+    if (moveL !== 0) {
+      state.paddleL.y += moveL * PADDLE_SPEED * dt;
+    } else if (state.touch.left.active) {
+      let targetY = state.touch.left.targetY;
+      if (leftInverted) targetY = H - targetY;
+      const targetTop = targetY - state.paddleL.h / 2;
+      const diff = targetTop - state.paddleL.y;
+      const maxMove = PADDLE_SPEED * 1.6 * dt;
+      state.paddleL.y += Math.max(-maxMove, Math.min(maxMove, diff));
+    }
+    clampPaddle(state.paddleL);
+
+    // Paddle R
+    if (state.vsComputer) {
+      updateAI(dt);
+    } else {
+      const rightInverted = state.invert.right > 0;
+      let moveR = 0;
+      if (state.keys.up) moveR -= 1;
+      if (state.keys.down) moveR += 1;
+      if (rightInverted) moveR = -moveR;
+      if (moveR !== 0) {
+        state.paddleR.y += moveR * PADDLE_SPEED * dt;
+      } else if (state.touch.right.active) {
+        let targetY = state.touch.right.targetY;
+        if (rightInverted) targetY = H - targetY;
+        const targetTop = targetY - state.paddleR.h / 2;
+        const diff = targetTop - state.paddleR.y;
+        const maxMove = PADDLE_SPEED * 1.6 * dt;
+        state.paddleR.y += Math.max(-maxMove, Math.min(maxMove, diff));
+      }
+    }
+    clampPaddle(state.paddleR);
+
+    // Aufschlag
+    if (state.serving) {
+      state.serveTimer -= dt;
+      if (state.serveTimer <= 0) serveBall();
+      return;
+    }
+
+    // Bälle
+    for (let i = state.balls.length - 1; i >= 0; i--) {
+      const ball = state.balls[i];
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+
+      if (ball.y - ball.r < 0) {
+        ball.y = ball.r;
+        ball.vy = Math.abs(ball.vy);
+      } else if (ball.y + ball.r > H) {
+        ball.y = H - ball.r;
+        ball.vy = -Math.abs(ball.vy);
+      }
+
+      if (ball.vx < 0 &&
+          ball.x - ball.r < state.paddleL.x + state.paddleL.w &&
+          ball.x + ball.r > state.paddleL.x &&
+          ball.y + ball.r > state.paddleL.y &&
+          ball.y - ball.r < state.paddleL.y + state.paddleL.h) {
+        ball.x = state.paddleL.x + state.paddleL.w + ball.r;
+        bounceOffPaddle(ball, state.paddleL, 1);
+      }
+      if (ball.vx > 0 &&
+          ball.x + ball.r > state.paddleR.x &&
+          ball.x - ball.r < state.paddleR.x + state.paddleR.w &&
+          ball.y + ball.r > state.paddleR.y &&
+          ball.y - ball.r < state.paddleR.y + state.paddleR.h) {
+        ball.x = state.paddleR.x - ball.r;
+        bounceOffPaddle(ball, state.paddleR, -1);
+      }
+
+      // Power-Up Kollision
+      if (state.activePowerUp) {
+        const pu = state.activePowerUp;
+        const dx = ball.x - pu.x;
+        const dy = ball.y - pu.y;
+        if (Math.sqrt(dx*dx + dy*dy) < ball.r + POWERUP_RADIUS) {
+          const triggeredBy = ball.vx > 0 ? 'left' : 'right';
+          if (pu.type === 'star')        applyStarPowerUp(pu);
+          else if (pu.type === 'invert') applyInvertPowerUp(triggeredBy);
+          else if (pu.type === 'grow')   applyGrowPowerUp();
+          else if (pu.type === 'shrink') applyShrinkPowerUp();
+          state.activePowerUp = null;
+        }
+      }
+
+      if (ball.x + ball.r < 0) {
+        state.scoreR++;
+        state.balls.splice(i, 1);
+        checkScore();
+      } else if (ball.x - ball.r > W) {
+        state.scoreL++;
+        state.balls.splice(i, 1);
+        checkScore();
+      }
+    }
+
+    if (state.balls.length === 0 && state.mode === 'playing' && !state.serving) {
+      resetForServe(false);
+    }
+  }
+
+  function bounceOffPaddle(ball, paddle, dir) {
+    const rel = (ball.y - (paddle.y + paddle.h / 2)) / (paddle.h / 2);
+    const clamped = Math.max(-1, Math.min(1, rel));
+    const maxAngle = 1.05;
+    const angle = clamped * maxAngle;
+
+    ball.speed = Math.min(ball.speed + 25, 900);
+    ball.vx = dir * ball.speed * Math.cos(angle);
+    ball.vy = ball.speed * Math.sin(angle);
+  }
+
+  function checkScore() {
+    if (state.scoreL >= WIN_SCORE || state.scoreR >= WIN_SCORE) {
+      state.mode = 'gameover';
+      const w = state.scoreL > state.scoreR ? 'Spieler 1' : 'Spieler 2';
+      winnerTextEl.textContent = w + ' gewinnt!';
+      show(gameOverEl);
+      state.activePowerUp = null;
+      return;
+    }
+    if (state.balls.length === 0) {
+      resetForServe(false);
+    }
+  }
+
+  function clampPaddle(p) {
+    if (p.y < 0) p.y = 0;
+    if (p.y + p.h > H) p.y = H - p.h;
+  }
+
+  function updateAI(dt) {
+    const ai = state.paddleR;
+    const center = ai.y + ai.h / 2;
+    const inverted = state.invert.right > 0;
+
+    let targetBall = null;
+    let bestX = -Infinity;
+    for (const b of state.balls) {
+      if (b.vx > 0 && b.x > bestX) { bestX = b.x; targetBall = b; }
+    }
+    let target = H / 2;
+    if (targetBall) target = targetBall.y;
+    target += Math.sin(performance.now() / 400) * 8;
+    if (inverted) target = H - target;
+
+    const diff = target - center;
+    const speed = 520;
+    const maxMove = speed * dt;
+    if (Math.abs(diff) > 6) {
+      ai.y += Math.max(-maxMove, Math.min(maxMove, diff));
+    }
+    clampPaddle(ai);
+  }
+
+  // ---------- Rendern ----------
+  function draw() {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = 'rgba(0,255,255,0.25)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([12, 16]);
+    ctx.beginPath();
+    ctx.moveTo(W / 2, 0);
+    ctx.lineTo(W / 2, H);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = 'rgba(0,255,255,0.4)';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(2, 2, W - 4, H - 4);
+
+    ctx.fillStyle = 'rgba(0,255,255,0.85)';
+    ctx.font = 'bold 64px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(state.scoreL, W * 0.35, 70);
+    ctx.fillText(state.scoreR, W * 0.65, 70);
+
+    if (state.activePowerUp) drawPowerUp(state.activePowerUp);
+
+    drawPaddle(state.paddleL, state.invert.left > 0 ? '#f44' : '#0ff');
+    drawPaddle(state.paddleR, state.invert.right > 0 ? '#f44' : '#0ff');
+
+    for (const b of state.balls) {
+      ctx.shadowColor = '#0ff';
+      ctx.shadowBlur = 20;
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    if (state.serving && state.mode === 'playing') {
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font = '24px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('Bereit...', W / 2, H - 40);
+    }
+
+    // Status-Indikatoren unten
+    if (state.invert.left > 0)  drawStatusText('left', 'INV ' + Math.ceil(state.invert.left) + 's', '#f4f');
+    if (state.invert.right > 0) drawStatusText('right', 'INV ' + Math.ceil(state.invert.right) + 's', '#f4f');
+    if (state.growTimer > 0)    drawStatusText('center', 'SCHLÄGER GROSS ' + Math.ceil(state.growTimer) + 's', '#4f4');
+    if (state.shrinkTimer > 0)  drawStatusText('center', 'SCHLÄGER KLEIN ' + Math.ceil(state.shrinkTimer) + 's', '#f84');
+  }
+
+  function drawStatusText(pos, text, color) {
+    let x;
+    if (pos === 'left') x = 100;
+    else if (pos === 'right') x = W - 100;
+    else x = W / 2;
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = color;
+    ctx.font = 'bold 20px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x, H - 40);
+    ctx.restore();
+  }
+
+  function drawPaddle(p, color) {
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = color;
+    roundRect(ctx, p.x, p.y, p.w, p.h, 6);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  function drawPowerUp(pu) {
+    const pulse = 1 + Math.sin(pu.age * 4) * 0.08;
+    const r = POWERUP_RADIUS * pu.spawnAnim * pulse;
+    const remain = POWERUP_LIFETIME - pu.age;
+    const fadeOut = remain < 3 ? Math.max(0, remain / 3) : 1;
+    const a = Math.min(1, pu.spawnAnim) * fadeOut;
+
+    ctx.save();
+    ctx.globalAlpha = a;
+
+    if (pu.type === 'star')        drawStar(pu.x, pu.y, r, '#ffd700', '#ffaa00');
+    else if (pu.type === 'invert') drawInvertIcon(pu.x, pu.y, r, '#ff66ff', '#aa44ff');
+    else if (pu.type === 'grow')   drawGrowIcon(pu.x, pu.y, r, '#66ff88', '#22cc55');
+    else if (pu.type === 'shrink') drawShrinkIcon(pu.x, pu.y, r, '#ffaa44', '#cc6622');
+
+    ctx.restore();
+  }
+
+  function drawStar(cx, cy, radius, fillColor, glowColor) {
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = 25;
+
+    const spikes = 5;
+    const outer = radius;
+    const inner = radius * 0.45;
+    ctx.beginPath();
+    for (let i = 0; i < spikes * 2; i++) {
+      const r = i % 2 === 0 ? outer : inner;
+      const angle = (Math.PI / spikes) * i - Math.PI / 2;
+      const x = cx + Math.cos(angle) * r;
+      const y = cy + Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawInvertIcon(cx, cy, radius, fillColor, glowColor) {
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = 25;
+    ctx.fillStyle = fillColor;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.strokeStyle = '#fff';
+    ctx.fillStyle = '#fff';
+    ctx.lineWidth = radius * 0.16;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    const offset = radius * 0.28;
+    drawArrow(cx - offset * 0.4, cy + offset, cx - offset * 0.4, cy - offset, radius * 0.22);
+    drawArrow(cx + offset * 0.4, cy - offset, cx + offset * 0.4, cy + offset, radius * 0.22);
+  }
+
+  // "Grow": Kreis mit zwei nach außen zeigenden Pfeilen (Schläger wird größer)
+  function drawGrowIcon(cx, cy, radius, fillColor, glowColor) {
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = 25;
+    ctx.fillStyle = fillColor;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.strokeStyle = '#003';
+    ctx.fillStyle = '#003';
+    ctx.lineWidth = radius * 0.14;
+    ctx.lineCap = 'round';
+
+    // Pfeil nach oben
+    drawArrow(cx, cy - radius * 0.15, cx, cy - radius * 0.6, radius * 0.22);
+    // Pfeil nach unten
+    drawArrow(cx, cy + radius * 0.15, cx, cy + radius * 0.6, radius * 0.22);
+
+    // Symbolischer Schläger in der Mitte (kurzer vertikaler Balken)
+    ctx.lineWidth = radius * 0.18;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - radius * 0.15);
+    ctx.lineTo(cx, cy + radius * 0.15);
+    ctx.stroke();
+  }
+
+  // "Shrink": Kreis mit zwei nach innen zeigenden Pfeilen
+  function drawShrinkIcon(cx, cy, radius, fillColor, glowColor) {
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = 25;
+    ctx.fillStyle = fillColor;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.strokeStyle = '#301';
+    ctx.fillStyle = '#301';
+    ctx.lineWidth = radius * 0.14;
+    ctx.lineCap = 'round';
+
+    // Pfeil nach unten (oben, zeigt zur Mitte)
+    drawArrow(cx, cy - radius * 0.6, cx, cy - radius * 0.15, radius * 0.22);
+    // Pfeil nach oben (unten, zeigt zur Mitte)
+    drawArrow(cx, cy + radius * 0.6, cx, cy + radius * 0.15, radius * 0.22);
+
+    // Symbolischer (kurzer) Schläger in der Mitte
+    ctx.lineWidth = radius * 0.18;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - radius * 0.15);
+    ctx.lineTo(cx, cy + radius * 0.15);
+    ctx.stroke();
+  }
+
+  function drawArrow(x1, y1, x2, y2, headSize) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - headSize * Math.cos(angle - Math.PI / 6),
+               y2 - headSize * Math.sin(angle - Math.PI / 6));
+    ctx.lineTo(x2 - headSize * Math.cos(angle + Math.PI / 6),
+               y2 - headSize * Math.sin(angle + Math.PI / 6));
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // ---------- Loop ----------
+  function loop(now) {
+    const dt = Math.min((now - state.lastTime) / 1000, 0.05);
+    state.lastTime = now;
+
+    if (state.mode === 'playing') update(dt);
+
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- Init ----------
+  resize();
+  resetPaddles();
+  resetForServe(true);
+  state.lastTime = performance.now();
+  requestAnimationFrame(loop);
+
+  state.mode = 'menu';
+
+  document.addEventListener('gesturestart', e => e.preventDefault());
+  document.addEventListener('dblclick', e => e.preventDefault());
+
+})();
+</script>
+</body>
+</html>
