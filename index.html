@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#000000">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
 <title>Pong</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -25,7 +29,7 @@
     background: rgba(0,0,0,0.85);
     color: #fff; text-align: center; padding: 20px; z-index: 10;
   }
-  .overlay.hidden { display: none; }
+  .hidden { display: none !important; }
   .overlay h1 {
     font-size: clamp(28px, 6vw, 64px);
     margin-bottom: 20px; letter-spacing: 4px;
@@ -82,6 +86,13 @@
     60%, 100% { transform: rotate(90deg); }
   }
 
+  .btn.install-btn {
+    background: #ffd700;
+    box-shadow: 0 0 15px rgba(255,215,0,0.4);
+    margin-top: 8px;
+  }
+  .btn.install-btn:hover { box-shadow: 0 0 25px rgba(255,215,0,0.8); }
+
   .controls-hint { font-size: clamp(11px, 1.6vw, 15px); color: #666; margin-top: 20px; }
 </style>
 </head>
@@ -96,6 +107,7 @@
     <button class="btn" id="btn1P">1 Spieler (gegen Computer)</button>
     <button class="btn secondary" id="btn2P">2 Spieler</button>
 
+
     <div class="powerup-toggle" id="powerupToggle">
       <span class="label">Power-Ups</span>
       <span class="switch"></span>
@@ -106,6 +118,9 @@
       Touch: linke Bildschirmhälfte = links &nbsp;•&nbsp; rechte Hälfte = rechts<br>
       (Wischen funktioniert überall – auch außerhalb des Spielfelds)
     </div>
+
+    
+    <button class="btn install-btn hidden" id="btnInstall">Spiel installieren</button>
   </div>
 
   <div id="pauseMenu" class="overlay hidden">
@@ -185,9 +200,9 @@
   const PADDLE_SPEED = 620;
 
   const POWERUP_RADIUS = 26;
-  const POWERUP_SPAWN_MIN = 30;
-  const POWERUP_SPAWN_MAX = 60;
-  const POWERUP_LIFETIME = 20;
+  const POWERUP_SPAWN_MIN = 20;
+  const POWERUP_SPAWN_MAX = 40;
+  const POWERUP_LIFETIME = 30;
   const INVERT_DURATION = 15;
   const SIZE_DURATION = 15;
 
@@ -914,6 +929,40 @@
 
   document.addEventListener('gesturestart', e => e.preventDefault());
   document.addEventListener('dblclick', e => e.preventDefault());
+
+
+  // ---------- PWA: Service Worker + Install-Button ----------
+const btnInstall = document.getElementById('btnInstall');
+let deferredPrompt = null;
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((err) => {
+      console.warn('Service Worker Registrierung fehlgeschlagen:', err);
+    });
+  });
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  btnInstall.classList.remove('hidden');
+});
+
+btnInstall.addEventListener('click', async () => {
+  if (!deferredPrompt) return;
+  btnInstall.classList.add('hidden');
+  deferredPrompt.prompt();
+  try {
+    await deferredPrompt.userChoice;
+  } catch (_) {}
+  deferredPrompt = null;
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredPrompt = null;
+  btnInstall.classList.add('hidden');
+});
 
 })();
 </script>
